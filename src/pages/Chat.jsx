@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Send, Phone, Video, MoreVertical, Paperclip, Smile } from 'lucide-react'
 import { messagesAPI, connectionsAPI } from '../api'
-import { useChatStore, useAuthStore, useConnectionsStore } from '../store'
+import { useAuthStore, useConnectionsStore } from '../store'
 import { useCall } from '../contexts/CallContext'
 import ChatBubble from '../components/ChatBubble'
 
@@ -16,8 +16,6 @@ const Chat = () => {
   const [messages, setMessages] = useState([])
   const [newMessage, setNewMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const wsRef = useRef(null)
-  const [ws, setWs] = useState(null)
   const [selectedFile, setSelectedFile] = useState(null)
   const [isTyping, setIsTyping] = useState(false)
   
@@ -27,20 +25,9 @@ const Chat = () => {
 
   const messagesEndRef = useRef(null)
   const fileInputRef = useRef(null)
-  const typingTimeoutRef = useRef(null)
 
   useEffect(() => {
     loadConversations()
-    initWebSocket()
-    
-    return () => {
-      // ensure any open websocket is closed on unmount
-      if (wsRef.current) {
-        try { wsRef.current.close() } catch (e) { /* ignore */ }
-        wsRef.current = null
-        setWs(null)
-      }
-    }
   }, [])
 
   useEffect(() => {
@@ -52,140 +39,6 @@ const Chat = () => {
   useEffect(() => {
     scrollToBottom()
   }, [messages])
-
-  const initWebSocket = () => {
-    if (!user?.id) {
-      console.log('No user ID available for WebSocket connection')
-      return
-    }
-
-    const token = localStorage.getItem('access_token')
-    if (!token) {
-      console.log('No access token available for WebSocket connection')
-      return
-    }
-
-    // Prefer explicit WS base if provided; fall back to API base or localhost
-    const rawBase = import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_API_BASE_URL || 'ws://localhost:8000'
-    let base = String(rawBase).trim()
-
-    // Normalize scheme to ws/wss
-    if (base.startsWith('http://')) {
-      base = base.replace('http://', 'ws://')
-    } else if (base.startsWith('https://')) {
-      base = base.replace('https://', 'wss://')
-    } else if (!base.startsWith('ws://') && !base.startsWith('wss://')) {
-      base = 'ws://' + base
-    }
-
-    const wsUrl = `${base.replace(/\/$/, '')}/ws/${user.id}?token=${encodeURIComponent(token)}`
-    console.log('Connecting to WebSocket:', wsUrl.replace(token, '[TOKEN]'))
-
-    try {
-      const websocket = new WebSocket(wsUrl)
-
-      // keep a ref to the active socket so cleanup/reconnect logic can access it reliably
-      wsRef.current = websocket
-
-      websocket.onopen = () => {
-        console.log('✅ WebSocket connected successfully')
-        setWs(websocket)
-      }
-
-      websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          handleWebSocketMessage(data)
-        } catch (error) {
-          console.error('Failed to parse WebSocket message:', error, event.data)
-        }
-      }
-
-      websocket.onclose = (event) => {
-        console.log('❌ WebSocket disconnected:', event.code, event.reason)
-        // clear refs/state only if this is the current socket
-        if (wsRef.current === websocket) {
-          wsRef.current = null
-          setWs(null)
-        }
-        // Reconnect after 3 seconds if not a policy violation
-        if (event.code !== 1008) {
-          setTimeout(() => {
-            // don't create duplicate sockets
-            if (!wsRef.current) initWebSocket()
-          }, 3000)
-        } else {
-          console.error('WebSocket authentication failed')
-        }
-      }
-
-      websocket.onerror = (error) => {
-        console.error('WebSocket error:', error)
-      }
-    } catch (e) {
-      console.error('Failed to create WebSocket:', e)
-    }
-  }
-
-  const handleWebSocketMessage = (data) => {
-    console.log('WebSocket message received:', data)
-    
-    switch (data.type) {
-      case 'new_message':
-        // Only add message if it's part of the current conversation
-        if (userId && (data.data.sender_id === parseInt(userId) || data.data.receiver_id === parseInt(userId))) {
-          setMessages(prev => {
-            // Check if message already exists to avoid duplicates
-            const exists = prev.some(msg => msg.id === data.data.id)
-            if (!exists) {
-              return [...prev, data.data]
-            }
-            return prev
-          })
-          
-          // Play notification sound if it's from the other user
-          if (data.data.sender_id === parseInt(userId)) {
-            try {
-              const audio = new Audio('/src/assets/chatmessage.mp3')
-              audio.play().catch(e => console.log('Could not play notification sound:', e))
-            } catch (e) {
-              console.log('Could not play notification sound:', e)
-            }
-          }
-        }
-        break
-        
-      case 'message_updated':
-        // Update existing message
-        if (userId && (data.data.sender_id === parseInt(userId) || data.data.receiver_id === parseInt(userId))) {
-          setMessages(prev => prev.map(msg =>
-            msg.id === data.data.id ? data.data : msg
-          ))
-        }
-        break
-        
-      case 'typing_start':
-        if (data.data && data.data.user_id === parseInt(userId)) {
-          setIsTyping(true)
-        }
-        break
-        
-      case 'typing_stop':
-        if (data.data && data.data.user_id === parseInt(userId)) {
-          setIsTyping(false)
-        }
-        break
-        
-      case 'conversation_update':
-        // Refresh conversations list
-        loadConversations()
-        break
-        
-      default:
-        console.log('Unknown WebSocket message type:', data.type)
-        break
-    }
-  }
 
   const loadConversations = async () => {
     try {
@@ -243,38 +96,6 @@ const Chat = () => {
 
   const handleTyping = (e) => {
     setNewMessage(e.target.value)
-    
-    const sock = wsRef.current
-    // Send typing indicator only if socket is open
-    if (sock && sock.readyState === WebSocket.OPEN && userId) {
-      try {
-        sock.send(JSON.stringify({
-          type: 'typing_start',
-          data: { receiver_id: parseInt(userId) }
-        }))
-      } catch (err) {
-        console.warn('Failed to send typing_start over WS:', err)
-      }
-      
-      // Clear previous timeout
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current)
-      }
-      
-      // Stop typing after 2 seconds of inactivity
-      typingTimeoutRef.current = setTimeout(() => {
-        try {
-          if (sock && sock.readyState === WebSocket.OPEN) {
-            sock.send(JSON.stringify({
-              type: 'typing_stop',
-              data: { receiver_id: parseInt(userId) }
-            }))
-          }
-        } catch (err) {
-          console.warn('Failed to send typing_stop over WS:', err)
-        }
-      }, 2000)
-    }
   }
 
   const handleFileSelect = (e) => {

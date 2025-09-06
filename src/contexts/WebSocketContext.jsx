@@ -32,8 +32,25 @@ export const WebSocketProvider = ({ children }) => {
     const token = localStorage.getItem('access_token');
     if (!token) return;
 
-    const baseUrl = 'http://localhost:8000';
-    const wsUrl = baseUrl.replace(/^http/, 'ws') + `/ws/${user.id}?token=${encodeURIComponent(token)}`;
+    // Use a robust method to determine the WebSocket URL, with fallbacks.
+    const getWebSocketUrl = () => {
+      const rawBase = import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_API_BASE_URL || window.location.host;
+      let base = String(rawBase).trim();
+
+      // Normalize scheme to ws/wss
+      if (base.startsWith('http://')) {
+        base = base.replace('http://', 'ws://');
+      } else if (base.startsWith('https://')) {
+        base = base.replace('https://', 'wss://');
+      } else if (!base.startsWith('ws://') && !base.startsWith('wss://')) {
+        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        base = protocol + base;
+      }
+      
+      // The backend WebSocket endpoint is at /ws/:userId
+      return `${base.replace(/\/$/, '')}/ws/${user.id}?token=${encodeURIComponent(token)}`;
+    }
+    const wsUrl = getWebSocketUrl();
 
     let reconnectTimeoutId = null;
     let retryCount = 0;
