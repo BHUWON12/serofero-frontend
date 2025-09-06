@@ -95,7 +95,7 @@ export const postsAPI = {
     params: { skip, limit }
   }),
   deleteComment: (commentId) => api.delete(`/posts/comments/${commentId}`),
-  delete: (postId) => api.delete(`/posts/${postId}`),
+  deletePost: (postId) => api.delete(`/posts/${postId}`),
 }
 
 // Feed API
@@ -132,7 +132,7 @@ export const messagesAPI = {
   }),
   getConversations: () => api.get('/messages/'),
   markAsRead: (messageId) => api.post(`/messages/${messageId}/read`),
-  delete: (messageId) => api.delete(`/messages/${messageId}`),
+  deleteMessage: (messageId) => api.delete(`/messages/${messageId}`),
 }
 
 // Block API
