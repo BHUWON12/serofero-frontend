@@ -7,7 +7,7 @@ import ConfirmModal from './ConfirmModal'
 
 const API_URL = import.meta.env.VITE_API_URL
 
-const PostCard = ({ post }) => {
+const PostCard = ({ post, index }) => {
   const [isLiked, setIsLiked] = useState(post.is_liked)
   const [likesCount, setLikesCount] = useState(post.likes_count)
   const [showMenu, setShowMenu] = useState(false)
@@ -149,10 +149,10 @@ const PostCard = ({ post }) => {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 30, scale: 0.95 }}
+      initial={{ opacity: 0, y: 20, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -30, scale: 0.95 }}
-      transition={{ duration: 0.4, ease: "easeOut" }}
+      exit={{ opacity: 0, y: -20, scale: 0.95 }}
+      transition={{ duration: 0.3, delay: (index || 0) * 0.05, ease: "easeOut" }}
       className={`card p-6 mb-6 mx-4 relative backdrop-blur-sm border border-gray-100 dark:border-gray-800 hover:shadow-lg transition-all duration-300 ${showMenu ? 'z-30' : ''}`}
     >
       {/* Subtle gradient overlay */}

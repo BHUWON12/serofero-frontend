@@ -252,17 +252,7 @@ const Feed = () => {
         ) : (
           <>
             <AnimatePresence>
-              {posts.map((post, index) => (
-                <motion.div
-                  key={post.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 0.3, delay: index * 0.05 }}
-                >
-                  <PostCard post={post} />
-                </motion.div>
-              ))}
+              {posts.map((post, index) => <PostCard key={post.id} post={post} index={index} />)}
             </AnimatePresence>
 
             {/* Enhanced Load more trigger */}
