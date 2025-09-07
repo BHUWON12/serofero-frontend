@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { useAuthStore } from '../store';
 
 const WebSocketContext = createContext();
-
 export const useWebSocket = () => useContext(WebSocketContext);
 
 export const WebSocketProvider = ({ children }) => {
@@ -13,7 +12,6 @@ export const WebSocketProvider = ({ children }) => {
   const messageHandlersRef = useRef(new Map());
   const { user } = useAuthStore();
 
-  // Preload audio
   const audioRef = useRef(new Audio('/assets/chatmessage.mp3'));
 
   const addMessageHandler = useCallback((key, handler) => {
@@ -32,25 +30,13 @@ export const WebSocketProvider = ({ children }) => {
 
   useEffect(() => {
     if (!user?.id) return;
-
     const token = localStorage.getItem('access_token');
     if (!token) return;
 
-    // Generate WebSocket URL dynamically
-    const getWebSocketUrl = () => {
-      let base = import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_API_BASE_URL || window.location.host;
-      base = String(base).trim();
+    const wsBaseUrl = import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_BASE_URL;
+    if (!wsBaseUrl) return;
 
-      if (base.startsWith('http://')) base = base.replace('http://', 'ws://');
-      else if (base.startsWith('https://')) base = base.replace('https://', 'wss://');
-      else if (!base.startsWith('ws://') && !base.startsWith('wss://')) {
-        base = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + base;
-      }
-
-      return `${base.replace(/\/$/, '')}/ws/${user.id}?token=${encodeURIComponent(token)}`;
-    };
-
-    const wsUrl = getWebSocketUrl();
+    const wsUrl = wsBaseUrl.replace(/^http/, 'ws').replace(/^https/, 'wss') + `/ws/${user.id}?token=${encodeURIComponent(token)}`;
     let retryCount = 0;
 
     const connect = () => {
@@ -71,7 +57,7 @@ export const WebSocketProvider = ({ children }) => {
         setIsConnected(false);
         retryCount++;
         const delay = Math.min(30000, 2 ** retryCount * 1000);
-        console.log(`Retrying in ${delay / 1000} seconds...`);
+        console.log(`Retrying in ${delay / 1000}s...`);
         reconnectTimeoutRef.current = setTimeout(connect, delay);
       };
 
@@ -82,12 +68,8 @@ export const WebSocketProvider = ({ children }) => {
 
       ws.onmessage = (event) => {
         let payload;
-        try {
-          payload = JSON.parse(event.data);
-        } catch (err) {
-          console.error('Failed to parse WebSocket message:', err);
-          return;
-        }
+        try { payload = JSON.parse(event.data); } 
+        catch { return console.error('Failed to parse WebSocket message'); }
 
         if (payload.type === 'status') {
           setOnlineUsers(prev => {
@@ -97,7 +79,7 @@ export const WebSocketProvider = ({ children }) => {
           });
         }
 
-        if (payload.type === 'new_message' && payload.data && payload.data.sender_id !== user.id) {
+        if (payload.type === 'new_message' && payload.data?.sender_id !== user.id) {
           audioRef.current.play().catch(err => console.log('Audio play failed:', err));
         }
 
@@ -113,7 +95,6 @@ export const WebSocketProvider = ({ children }) => {
       }
     }, 30000);
 
-    // Cleanup on unmount or logout
     return () => {
       clearInterval(pingInterval);
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
