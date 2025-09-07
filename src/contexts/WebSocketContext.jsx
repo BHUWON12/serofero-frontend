@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../store';
 
 const WebSocketContext = createContext();
@@ -9,8 +9,12 @@ export const WebSocketProvider = ({ children }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const wsRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
   const messageHandlersRef = useRef(new Map());
   const { user } = useAuthStore();
+
+  // Preload audio
+  const audioRef = useRef(new Audio('/assets/chatmessage.mp3'));
 
   const addMessageHandler = useCallback((key, handler) => {
     messageHandlersRef.current.set(key, handler);
@@ -21,7 +25,7 @@ export const WebSocketProvider = ({ children }) => {
   }, []);
 
   const sendMessage = useCallback((message) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
     }
   }, []);
@@ -32,66 +36,59 @@ export const WebSocketProvider = ({ children }) => {
     const token = localStorage.getItem('access_token');
     if (!token) return;
 
-    // Use a robust method to determine the WebSocket URL, with fallbacks.
+    // Generate WebSocket URL dynamically
     const getWebSocketUrl = () => {
-      const rawBase = import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_API_BASE_URL || window.location.host;
-      let base = String(rawBase).trim();
+      let base = import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_API_BASE_URL || window.location.host;
+      base = String(base).trim();
 
-      // Normalize scheme to ws/wss
-      if (base.startsWith('http://')) {
-        base = base.replace('http://', 'ws://');
-      } else if (base.startsWith('https://')) {
-        base = base.replace('https://', 'wss://');
-      } else if (!base.startsWith('ws://') && !base.startsWith('wss://')) {
-        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-        base = protocol + base;
+      if (base.startsWith('http://')) base = base.replace('http://', 'ws://');
+      else if (base.startsWith('https://')) base = base.replace('https://', 'wss://');
+      else if (!base.startsWith('ws://') && !base.startsWith('wss://')) {
+        base = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + base;
       }
-      
-      // The backend WebSocket endpoint is at /ws/:userId
-      return `${base.replace(/\/$/, '')}/ws/${user.id}?token=${encodeURIComponent(token)}`;
-    }
-    const wsUrl = getWebSocketUrl();
 
-    let reconnectTimeoutId = null;
+      return `${base.replace(/\/$/, '')}/ws/${user.id}?token=${encodeURIComponent(token)}`;
+    };
+
+    const wsUrl = getWebSocketUrl();
     let retryCount = 0;
 
     const connect = () => {
-      if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
-        return;
-      }
+      if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) return;
 
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log("✅ WebSocket connected");
+        console.log('✅ WebSocket connected');
         setIsConnected(true);
         retryCount = 0;
-        if (reconnectTimeoutId) clearTimeout(reconnectTimeoutId);
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       };
 
       ws.onclose = (e) => {
-        console.log(`❌ WebSocket closed.`, e);
+        console.log('❌ WebSocket closed.', e);
         setIsConnected(false);
         retryCount++;
-        const delay = Math.min(30000, (2 ** retryCount) * 1000);
+        const delay = Math.min(30000, 2 ** retryCount * 1000);
         console.log(`Retrying in ${delay / 1000} seconds...`);
-
-        reconnectTimeoutId = setTimeout(connect, delay);
+        reconnectTimeoutRef.current = setTimeout(connect, delay);
       };
 
       ws.onerror = (err) => {
-        console.error("⚠️ WebSocket error", err);
-        // Only close if not already closing/closed
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-          ws.close();
-        }
+        console.error('⚠️ WebSocket error', err);
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
       };
 
       ws.onmessage = (event) => {
-        const payload = JSON.parse(event.data);
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch (err) {
+          console.error('Failed to parse WebSocket message:', err);
+          return;
+        }
 
-        // Handle status updates
         if (payload.type === 'status') {
           setOnlineUsers(prev => {
             const newSet = new Set(prev);
@@ -100,26 +97,11 @@ export const WebSocketProvider = ({ children }) => {
           });
         }
 
-        // Play notification sound for incoming messages
-        if (payload.type === 'new_message' && payload.data) {
-          const messageData = payload.data;
-          // Only play sound for received messages (not sent by current user)
-          if (messageData.sender_id !== user.id) {
-            try {
-              const audio = new Audio('/assets/chatmessage.mp3');
-              audio.play().catch(err => {
-                console.log('Audio play failed:', err);
-              });
-            } catch (error) {
-              console.log('Audio creation failed:', error);
-            }
-          }
+        if (payload.type === 'new_message' && payload.data && payload.data.sender_id !== user.id) {
+          audioRef.current.play().catch(err => console.log('Audio play failed:', err));
         }
 
-        // Dispatch to registered handlers
-        messageHandlersRef.current.forEach(handler => {
-          handler(payload);
-        });
+        messageHandlersRef.current.forEach(handler => handler(payload));
       };
     };
 
@@ -127,28 +109,25 @@ export const WebSocketProvider = ({ children }) => {
 
     const pingInterval = setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "ping" }));
+        wsRef.current.send(JSON.stringify({ type: 'ping' }));
       }
     }, 30000);
 
+    // Cleanup on unmount or logout
     return () => {
       clearInterval(pingInterval);
-      if (reconnectTimeoutId) {
-        clearTimeout(reconnectTimeoutId);
-      }
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (wsRef.current) wsRef.current.close();
     };
   }, [user?.id]);
 
-  const value = {
+  const value = useMemo(() => ({
     isConnected,
     onlineUsers,
     sendMessage,
     addMessageHandler,
     removeMessageHandler,
-  };
+  }), [isConnected, onlineUsers, sendMessage, addMessageHandler, removeMessageHandler]);
 
   return <WebSocketContext.Provider value={value}>{children}</WebSocketContext.Provider>;
 };
