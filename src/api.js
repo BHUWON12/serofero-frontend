@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://serofero-backend-bhuwon129903-tkqlq58c.apn.leapcell.dev'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://fastapi-backend-447658426881.asia-south1.run.app'
 
 // Create axios instance
 const api = axios.create({
